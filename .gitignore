@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# database (local only)
+prisma/data.db
+prisma/data.db-journal
+
+# env files
+.env
+.env.local
+.env.*.local
+
+# debug
+npm-debug.log*
+npminstall-debug.log*
+
+# misc
+.DS_Store
+*.pem
+
+# local settings
+.claude/settings.local.json

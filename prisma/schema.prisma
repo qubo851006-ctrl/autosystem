@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./data.db"
+}
+
+model Flow {
+  id        String   @id @default(cuid())
+  name      String
+  url       String
+  config    String   // JSON 序列化的 FlowConfig
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tasks     Task[]
+}
+
+model Task {
+  id             String    @id @default(cuid())
+  flowId         String
+  flow           Flow      @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  status         String    @default("pending")
+  inputData      String    // JSON 序列化的 Record<string, string>
+  logs           String    @default("[]") // JSON 序列化的 StepLog[]
+  screenshotPath String?
+  errorMessage   String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  siteUrl   String   @unique
+  cookies   String   // JSON 序列化的 Cookie 数组
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
