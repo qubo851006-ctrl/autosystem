@@ -5,6 +5,9 @@ node_modules/
 .next/
 out/
 
+# TypeScript build info
+*.tsbuildinfo
+
 # database (local only)
 prisma/data.db
 prisma/data.db-journal

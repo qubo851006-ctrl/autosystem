@@ -17,6 +17,18 @@ export async function loadSession(url: string): Promise<BrowserContext> {
   return browser.newContext()
 }
 
+// 读取已保存的 cookie（不启动浏览器），供录制时注入登录态
+export async function getSessionCookies(url: string): Promise<unknown[]> {
+  const origin = new URL(url).origin
+  const saved = await prisma.session.findUnique({ where: { siteUrl: origin } })
+  if (!saved) return []
+  try {
+    return JSON.parse(saved.cookies) as unknown[]
+  } catch {
+    return []
+  }
+}
+
 export async function saveSession(context: BrowserContext, url: string): Promise<void> {
   const origin = new URL(url).origin
   const cookies = await context.cookies()

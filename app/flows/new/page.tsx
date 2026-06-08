@@ -32,7 +32,12 @@ export default function NewFlowPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       })
-      if (!res.ok) throw new Error((await res.json()).error)
+      if (!res.ok) {
+        const text = await res.text()
+        let msg = '启动录制失败'
+        try { msg = JSON.parse(text).error ?? msg } catch { /* body 非 JSON */ }
+        throw new Error(msg)
+      }
       setStep('recording')
     } catch (e) {
       setError((e as Error).message)
@@ -49,7 +54,12 @@ export default function NewFlowPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name || '新流程', url }),
       })
-      if (!res.ok) throw new Error((await res.json()).error)
+      if (!res.ok) {
+        const text = await res.text()
+        let msg = '停止录制失败'
+        try { msg = JSON.parse(text).error ?? msg } catch { /* body 非 JSON */ }
+        throw new Error(msg)
+      }
       const cfg: FlowConfig = await res.json()
       setConfig(cfg)
       setName(cfg.name)

@@ -23,7 +23,10 @@ export default function FlowDetailPage() {
   useEffect(() => {
     fetch(`/api/flows/${id}`)
       .then((r) => r.json())
-      .then((data) => setConfig(JSON.parse(data.config) as FlowConfig))
+      .then((data) => {
+        if (data?.error) throw new Error(data.error)
+        setConfig(data.config as FlowConfig)
+      })
       .catch(() => setError('加载流程失败'))
   }, [id])
 

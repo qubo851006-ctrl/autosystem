@@ -16,8 +16,9 @@ export default function EditFlowPage() {
     fetch(`/api/flows/${id}`)
       .then((r) => r.json())
       .then((data) => {
+        if (data?.error) throw new Error(data.error)
         setName(data.name)
-        setConfig(JSON.parse(data.config) as FlowConfig)
+        setConfig(data.config as FlowConfig)
       })
       .catch(() => setError('加载流程失败'))
   }, [id])
