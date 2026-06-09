@@ -29,6 +29,16 @@ export async function getSessionCookies(url: string): Promise<unknown[]> {
   }
 }
 
+// 直接用一组 cookie（来自 codegen 的 storageState）更新登录态
+export async function saveStorageStateCookies(url: string, cookies: unknown[]): Promise<void> {
+  const origin = new URL(url).origin
+  await prisma.session.upsert({
+    where: { siteUrl: origin },
+    update: { cookies: JSON.stringify(cookies) },
+    create: { siteUrl: origin, cookies: JSON.stringify(cookies) },
+  })
+}
+
 export async function saveSession(context: BrowserContext, url: string): Promise<void> {
   const origin = new URL(url).origin
   const cookies = await context.cookies()

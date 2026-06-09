@@ -1,111 +1,145 @@
-import { chromium, Browser, BrowserContext } from 'playwright'
-import { FlowConfig, Step } from '@/types/flow'
-import { getSessionCookies, saveSession } from '../playwright/session'
+import { spawn, ChildProcess } from 'child_process'
+import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { RecordingResult } from '@/types/flow'
+import { getSessionCookies, saveStorageStateCookies } from '../playwright/session'
+import { cleanActionLines, extractCandidates } from './parseCodegen'
 
-type CapturedAction = { action: string; selector: string; value?: string }
-
-// Next.js 会把每个 API 路由编译成独立模块包，普通模块级变量在 start/stop
-// 两个路由间不共享。挂到 globalThis 上确保是同一份录制状态。
+// Next.js 把每个 API 路由编译成独立模块包，普通模块级变量在 start/stop 间不共享。
+// 挂到 globalThis 上确保两个路由读到同一份录制状态。
 const g = globalThis as unknown as {
-  __recState?: {
-    activeBrowser: Browser | null
-    activeContext: BrowserContext | null
-    capturedActions: CapturedAction[]
+  __codegenState?: {
+    proc: ChildProcess | null
+    outFile: string
+    storageFile: string
+    url: string
   }
 }
-const state = (g.__recState ??= {
-  activeBrowser: null,
-  activeContext: null,
-  capturedActions: [],
-})
 
 export async function startRecording(url: string): Promise<void> {
-  if (state.activeBrowser) await state.activeBrowser.close()
-  state.capturedActions = []
+  // 结束上一个仍在运行的录制
+  if (g.__codegenState?.proc && !g.__codegenState.proc.killed) {
+    g.__codegenState.proc.kill('SIGINT')
+  }
 
-  state.activeBrowser = await chromium.launch({ headless: false })
-  const context = await state.activeBrowser.newContext({ ignoreHTTPSErrors: true })
-  state.activeContext = context
+  const dir = mkdtempSync(join(tmpdir(), 'autosys-codegen-'))
+  const outFile = join(dir, 'recording.js')
+  const storageFile = join(dir, 'storage.json')
 
-  // 注入已保存的登录态（若该站点之前登录过），这样录制时无需重新登录
+  // 用已保存的登录态生成 storageState 文件，让录制窗口免登录打开
   const cookies = await getSessionCookies(url)
-  if (cookies.length > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await context.addCookies(cookies as any).catch(() => {})
-  }
+  writeFileSync(storageFile, JSON.stringify({ cookies, origins: [] }))
 
-  // 在 context 层注册，保证对所有页面/导航（含 goto 后的新页面）都生效
-  await context.exposeFunction('__captureAction', (action: object) => {
-    state.capturedActions.push(action as CapturedAction)
+  // 启动 Playwright 官方 codegen：加载登录态、录制结束保存登录态、导出 JS 脚本
+  const proc = spawn(
+    'npx',
+    [
+      'playwright',
+      'codegen',
+      '--load-storage',
+      storageFile,
+      '--save-storage',
+      storageFile,
+      '-o',
+      outFile,
+      '--target',
+      'javascript',
+      url,
+    ],
+    { cwd: process.cwd(), stdio: 'ignore', detached: false }
+  )
+
+  g.__codegenState = { proc, outFile, storageFile, url }
+
+  // 等待进程真正起来（npx 解析 + 浏览器启动）
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+    proc.on('error', (e) => {
+      if (!settled) {
+        settled = true
+        reject(e)
+      }
+    })
+    // 给 npx/浏览器一点启动时间；若没立刻报错就认为启动成功
+    setTimeout(() => {
+      if (!settled) {
+        settled = true
+        if (proc.exitCode !== null && proc.exitCode !== 0) {
+          reject(new Error('录制器启动失败，请确认已安装 Playwright 浏览器'))
+        } else {
+          resolve()
+        }
+      }
+    }, 1500)
   })
-
-  await context.addInitScript(() => {
-    document.addEventListener('click', (e) => {
-      const el = e.target as HTMLElement
-      const selector = el.id ? `#${el.id}` : el.tagName.toLowerCase()
-      ;(window as typeof window & { __captureAction: (a: object) => void }).__captureAction({
-        action: 'click', selector, value: undefined,
-      })
-    }, true)
-
-    document.addEventListener('change', (e) => {
-      const el = e.target as HTMLInputElement
-      const selector = el.id
-        ? `#${el.id}`
-        : el.name
-        ? `[name="${el.name}"]`
-        : el.tagName.toLowerCase()
-      ;(window as typeof window & { __captureAction: (a: object) => void }).__captureAction({
-        action: el.tagName === 'SELECT' ? 'select' : 'fill',
-        selector,
-        value: el.value,
-      })
-    }, true)
-  })
-
-  const page = await context.newPage()
-  await page.goto(url)
 }
 
-export async function stopRecording(flowName: string, url: string): Promise<FlowConfig> {
-  // 关闭浏览器前先把当前登录态（cookie）存库，供后续录制/执行复用
-  if (state.activeContext) {
-    await saveSession(state.activeContext, url).catch(() => {})
-    state.activeContext = null
-  }
-  if (state.activeBrowser) {
-    await state.activeBrowser.close()
-    state.activeBrowser = null
+export async function stopRecording(flowName: string, url: string): Promise<RecordingResult> {
+  const state = g.__codegenState
+  if (!state) {
+    throw new Error('没有进行中的录制')
   }
 
-  const deduped = deduplicateActions(state.capturedActions)
+  // SIGINT 让 codegen 正常退出并 flush 输出文件 + 保存登录态
+  if (state.proc && !state.proc.killed) {
+    state.proc.kill('SIGINT')
+  }
 
-  const steps: Step[] = deduped.map((a, i) => ({
-    action: a.action as Step['action'],
-    selector: a.selector,
-    value: a.value !== undefined ? `{{field_${i}}}` : undefined,
-    description: `${a.action} ${a.selector}`,
-  }))
+  // 等待进程退出并写完文件（最多等 8 秒）
+  await waitForExit(state.proc, 8000)
+  await waitForFile(state.outFile, 3000)
 
-  const fields = deduped
-    .filter((a) => a.value !== undefined)
-    .map((a, i) => ({
-      name: `field_${i}`,
-      label: a.selector.replace(/[#\[\]="']/g, '').slice(0, 20) || `字段${i + 1}`,
-      type: 'text' as const,
-    }))
+  let code = ''
+  try {
+    code = readFileSync(state.outFile, 'utf-8')
+  } catch {
+    throw new Error('未读取到录制结果，可能没有录制任何操作')
+  }
 
-  return { name: flowName, url, fields, steps }
-}
+  const actionLines = cleanActionLines(code)
+  const candidates = extractCandidates(actionLines)
 
-function deduplicateActions(actions: CapturedAction[]) {
-  const seen = new Map<string, CapturedAction>()
-  for (const a of actions) {
-    if (a.action === 'fill' || a.action === 'select') {
-      seen.set(a.selector, a)
-    } else {
-      seen.set(`${a.action}:${a.selector}:${Date.now()}`, a)
+  // 把录制期间（含可能的重新登录）产生的最新登录态保存回库
+  try {
+    if (existsSync(state.storageFile)) {
+      const storage = JSON.parse(readFileSync(state.storageFile, 'utf-8'))
+      await saveStorageStateCookies(url, storage.cookies ?? [])
     }
+  } catch {
+    /* 保存登录态失败不影响录制结果 */
   }
-  return Array.from(seen.values())
+
+  g.__codegenState = undefined
+
+  return { name: flowName, url, actionLines, candidates }
+}
+
+function waitForExit(proc: ChildProcess | null, timeoutMs: number): Promise<void> {
+  if (!proc || proc.exitCode !== null || proc.killed) return Promise.resolve()
+  return new Promise((resolve) => {
+    const t = setTimeout(() => {
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        /* ignore */
+      }
+      resolve()
+    }, timeoutMs)
+    proc.on('exit', () => {
+      clearTimeout(t)
+      resolve()
+    })
+  })
+}
+
+function waitForFile(path: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const start = Date.now()
+    const tick = () => {
+      if (existsSync(path) || Date.now() - start > timeoutMs) return resolve()
+      setTimeout(tick, 200)
+    }
+    tick()
+  })
 }

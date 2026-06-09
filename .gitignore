@@ -27,3 +27,4 @@ npminstall-debug.log*
 
 # local settings
 .claude/settings.local.json
+.codegraph/
