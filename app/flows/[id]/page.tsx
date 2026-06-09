@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import * as XLSX from 'xlsx'
 import { FlowConfig } from '@/types/flow'
 import { ManualForm } from '@/components/ManualForm'
 import { ExcelUpload } from '@/components/ExcelUpload'
@@ -72,6 +73,16 @@ export default function FlowDetailPage() {
     setLoading(false)
   }
 
+  function downloadTemplate() {
+    if (!config) return
+    // 表头必须是变量名（导入时按表头匹配 {{变量}}）。只放表头，每行数据由用户自己填。
+    const headers = config.fields.map((f) => f.name)
+    const ws = XLSX.utils.aoa_to_sheet([headers])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '数据')
+    XLSX.writeFile(wb, `${config.name || '流程'}_导入模板.xlsx`)
+  }
+
   if (!config) return (
     <div className="max-w-2xl mx-auto px-4 py-8 text-gray-400">
       {error ?? '加载中...'}
@@ -106,6 +117,32 @@ export default function FlowDetailPage() {
         <ManualForm fields={config.fields} onSubmit={runManual} loading={loading} />
       ) : (
         <div className="space-y-4">
+          {config.fields.length > 0 ? (
+            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-gray-300">
+                  导入模板共 {config.fields.length} 列（列名须与变量名一致）
+                </span>
+                <button
+                  onClick={downloadTemplate}
+                  className="shrink-0 text-xs bg-green-700 hover:bg-green-600 text-white px-3 py-1.5 rounded"
+                >
+                  ⬇ 下载导入模板
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {config.fields.map((f) => (
+                  <span key={f.name} className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded">
+                    {f.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-yellow-400/80 text-sm">
+              该流程没有可填变量，批量导入无意义（每行都会执行完全相同的操作）。
+            </p>
+          )}
           <ExcelUpload onUpload={setExcelRows} />
           {excelRows.length > 0 && (
             <p className="text-gray-400 text-sm">已载入 {excelRows.length} 行数据</p>
