@@ -43,6 +43,7 @@ async function runScript(
   logs: StepLog[]
 ): Promise<void> {
   await page.goto(config.url, { waitUntil: 'networkidle' }).catch(() => {})
+  assertNotLoginPage(page)
 
   // 0) 归一化动态 ID 定位器 + 剔除登录步骤（让旧流程回放也稳定）
   let script = normalizeScriptText(
@@ -123,6 +124,7 @@ async function runSteps(
   setScreenshot: (p: string) => void
 ): Promise<void> {
   await page.goto(config.url, { waitUntil: 'networkidle' })
+  assertNotLoginPage(page)
 
   for (let i = 0; i < config.steps.length; i++) {
     const step = config.steps[i]
@@ -175,6 +177,13 @@ async function runSteps(
       onProgress({ type: 'error', stepIndex: i, description: desc, error })
       throw err
     }
+  }
+}
+
+/** 打开目标页后若被重定向到登录页，说明登录态过期，立即给出清晰错误 */
+function assertNotLoginPage(page: Page): void {
+  if (/\/login|\/signin|\/sso\/|\/cas\/|\/oauth2?\/authorize/i.test(page.url())) {
+    throw new Error('登录态已过期：打开页面被重定向到登录页。请到流程页点「重新登录」刷新后再执行。')
   }
 }
 

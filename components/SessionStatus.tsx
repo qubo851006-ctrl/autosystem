@@ -65,15 +65,17 @@ export function SessionStatus({ url }: SessionStatusProps) {
   return (
     <div className="flex items-center gap-3">
       <span className={`text-sm ${badgeColor}`}>{badge}</span>
-      {status === 'expired' && (
-        <button
-          onClick={triggerLogin}
-          disabled={logging}
-          className="text-xs bg-yellow-700 hover:bg-yellow-600 disabled:opacity-50 text-white px-3 py-1 rounded"
-        >
-          {logging ? '等待登录...' : '重新登录'}
-        </button>
-      )}
+      {/* 始终提供登录入口：会话「有效」只代表存过 cookie，不保证未过期，
+          所以即使显示有效也允许随时重新登录刷新 */}
+      <button
+        onClick={triggerLogin}
+        disabled={logging}
+        className={`text-xs disabled:opacity-50 text-white px-3 py-1 rounded ${
+          status === 'valid' ? 'bg-gray-700 hover:bg-gray-600' : 'bg-yellow-700 hover:bg-yellow-600'
+        }`}
+      >
+        {logging ? '等待登录...' : status === 'valid' ? '刷新登录' : '重新登录'}
+      </button>
       {message && <span className="text-xs text-gray-400">{message}</span>}
     </div>
   )
